@@ -30,10 +30,6 @@ class Product:
         self.pcs_ordered = None
 
 
-
-
-
-
     def __str__(self):
         return self.title
 
@@ -176,7 +172,7 @@ class Product:
         for product in cls.product_list:
             if product.new_price is None: continue
             new_row = [
-                product.changed.strftime("%d.%m.%Y"),
+                datetime.today().strftime("%d.%m.%Y"),
                 round(product.days_passed, 1),
                 ' '.join(product.skus),
                 product.title,
@@ -211,7 +207,7 @@ class Product:
                     pcs_ordered += prod_stat['pcs_ordered']
         self.pcs_ordered = pcs_ordered
 
-    def add_profit(self, minimum_transactions, aquiring):
+    def add_profit(self, minimum_transactions, aquiring, profit_koef):
         """Дополняем товар средним доходом"""
 
         #1. Собираем номера отправлений доставленных заказов
@@ -233,9 +229,10 @@ class Product:
         if postings_total < minimum_transactions: # пропускаем товары, у которых мало доставленных заказов
             self.profit = None
         else:
-            self.profit = round(
-                income_total / postings_total - self.selfcost - aquiring * self.price,
-                ndigits=2)
+            self.profit = income_total / postings_total - self.selfcost - aquiring * self.price
+            self.profit = self.profit * profit_koef
+            self.profit = round(self.profit, ndigits=2)
+
             self.marj = round(self.profit / self.selfcost, 2)  # маржинальность
 
 
@@ -246,13 +243,22 @@ class Product:
         profit = self.profit * self.pcs_ordered
         self.profit_day = profit / self.days_passed
 
-    def count_new_price(self, koef):
+    def count_new_price(self, koef, minimum_marj):
         if self.profit_day > self.prev_profit_day:
             self.new_change = self.prev_change
         else:
             self.new_change = -self.prev_change
 
+        # Если маржинальность опустилась ниже допустимый, повышаем цену
+        if self.marj < 0.2:
+            self.new_change = 1
+            log.add(f'[i] Маржинальность {self.marj} ниже допустимой {minimum_marj}')
+
+
+
         self.new_price = round(self.price + self.price * koef * self.new_change)
+        log.add(f'[i] Цена повышена' if self.new_change == 1 else f'[i] Цена повышена')
+
 
 
     def change_price_oz(self):

@@ -1,6 +1,10 @@
+from sys import path
+path.append('D:\Dropbox\ZEERO\Automatization\My_modules\MP_apiconnect')
 
 from log import log
 from products import Product # добавляем класс с товарами
+
+
 
 MINIMUM_PERIOD_DAYS = 7     # минимальный период, который должен пройти с последнего изменения
 MINIMUM_ORDERS = 10         # минимальное количество заказов товара
@@ -8,6 +12,9 @@ MINIMUM_TRANSACTIONS = 5    # минимальное количество тра
                             #   посчитать прибыльность)
 PRICE_CHANGE_KOEF = 0.05    # коэффициент, на который изменяем цену
 ACQUIRING = 0.0015          # комиссия за эквайринг
+PROFIT_KOEF = 0.9           # коэффициент приведения расчетной прибыли к реальной (часть прибыли тратится на
+                            # дополнительные услуги, которые не учитываются в расчетах)
+MINIMUM_MARJ = 0.2          # минимально допустимая маржинальность
 
 
 log.clear()
@@ -16,7 +23,9 @@ Product.append_new_products() # добавляем новые продукты
 
 products_amount = len(Product.product_list)
 
-for count, product in enumerate(Product.product_list, start=1):
+for count, product in enumerate(sorted(Product.product_list, key=lambda x: x.skus[0]), start=1):
+
+    print()
 
     if product.days_passed < MINIMUM_PERIOD_DAYS:
         log.add(f'[i] Товар "{product}" пропущен. С последнего изменения прошло меньше {MINIMUM_PERIOD_DAYS} дней')
@@ -42,7 +51,7 @@ for count, product in enumerate(Product.product_list, start=1):
 
     print(f'[i] Товар {count} из {products_amount}, "{product}". Считаю прибыль.')
     # Получаем среднюю прибыль с одного заказа по данным из доставленных заказов
-    product.add_profit(MINIMUM_TRANSACTIONS, ACQUIRING)
+    product.add_profit(MINIMUM_TRANSACTIONS, ACQUIRING, PROFIT_KOEF)
     if product.profit is None:
         log.add(f'[i] Товар "{product}" пропущен. Недостаточно транзакций')
         product.new_price = product.new_change = None
@@ -53,7 +62,7 @@ for count, product in enumerate(Product.product_list, start=1):
 
     # Добавляем новую цену и новое изменение (1 или -1)
     # если прибыль выросла - изменить цену также, как менялась раньше, усли упала - наоборот
-    product.count_new_price(PRICE_CHANGE_KOEF)
+    product.count_new_price(PRICE_CHANGE_KOEF, MINIMUM_MARJ)
 
     print(f'[i] Товар {count} из {products_amount}, "{product}". Обновляю цену на площадке.')
     # Изменяем цену на площадке
