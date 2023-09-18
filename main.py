@@ -2,7 +2,7 @@
 from log import log
 from products import Product # добавляем класс с товарами
 
-MINIMUM_PERIOD_DAYS = 3     # минимальный период, который должен пройти с последнего изменения
+MINIMUM_PERIOD_DAYS = 7     # минимальный период, который должен пройти с последнего изменения
 MINIMUM_ORDERS = 10         # минимальное количество заказов товара
 MINIMUM_TRANSACTIONS = 5    # минимальное количество транзакций (доставленных товаров, по которым можно
                             #   посчитать прибыльность)
@@ -44,7 +44,7 @@ for count, product in enumerate(Product.product_list, start=1):
     # Получаем среднюю прибыль с одного заказа по данным из доставленных заказов
     product.add_profit(MINIMUM_TRANSACTIONS, ACQUIRING)
     if product.profit is None:
-        log.add(f'[i] Товар "{product}" пропущен. Меньше {MINIMUM_ORDERS} транзакций')
+        log.add(f'[i] Товар "{product}" пропущен. Недостаточно транзакций')
         product.new_price = product.new_change = None
         continue
 
@@ -64,7 +64,7 @@ for count, product in enumerate(Product.product_list, start=1):
 Product.save_ozon_dinamic_price_data()
 Product.save_changes_xls()
 
-for prod in Product.product_list:
-    prod.display()
+# for prod in Product.product_list:
+#     prod.display()
 
 
