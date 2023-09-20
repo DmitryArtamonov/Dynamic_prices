@@ -1,6 +1,3 @@
-# from sys import path
-# path.append('D:\Dropbox\ZEERO\Automatization\My_modules\MP_apiconnect')
-
 from my_modules.log.log import log
 from products import Product # добавляем класс с товарами
 

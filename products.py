@@ -4,7 +4,7 @@ from time import sleep
 from tqdm import tqdm
 from datetime import datetime, timedelta
 from my_modules.mp_apiconnect.apiconnect import ozon
-from my_modules.mp_apiconnect.apiconnect import ms
+from my_modules.mp_apiconnect.moy_sklad import ms
 from my_modules.log.log import log
 
 
@@ -221,6 +221,7 @@ class Product:
                 product.price,
                 product.new_price,
                 product.new_change,
+                ms.products[product.skus[0]]['price'],
                 product.pcs_ordered,
                 round(product.pcs_ordered / product.days_passed, 1),
                 round(product.profit_day),
@@ -295,12 +296,15 @@ class Product:
         else:
             self.new_change = -self.prev_change
 
-        # Если маржинальность опустилась ниже допустимый, повышаем цену
+        # Если цена была ниже цены Zeero, повышаем цену
+        if self.price < ms.products[self.skus[0]]['price']:
+            self.new_change = 1
+            log.add(f'[i] Цена товара {self.title} ниже допустимой')
+
+        # Если маржинальность опустилась ниже допустимой, повышаем цену
         if self.marj < 0.2:
             self.new_change = 1
-            log.add(f'[i] Маржинальность {self.marj} ниже допустимой {minimum_marj}')
-
-
+            log.add(f'[i] У товара {self.title} маржинальность {self.marj} ниже допустимой {minimum_marj}')
 
         self.new_price = round(self.price + self.price * koef * self.new_change)
         log.add(f'[i] Цена повышена' if self.new_change == 1 else f'[i] Цена повышена')
