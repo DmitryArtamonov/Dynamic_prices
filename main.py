@@ -1,9 +1,8 @@
-from sys import path
-path.append('D:\Dropbox\ZEERO\Automatization\My_modules\MP_apiconnect')
+# from sys import path
+# path.append('D:\Dropbox\ZEERO\Automatization\My_modules\MP_apiconnect')
 
-from log import log
+from my_modules.log.log import log
 from products import Product # добавляем класс с товарами
-
 
 
 MINIMUM_PERIOD_DAYS = 7     # минимальный период, который должен пройти с последнего изменения
@@ -21,6 +20,9 @@ log.clear()
 Product.get_ozon_dinamic_price_data() # загружаем данные о последнем изменении
 Product.append_new_products() # добавляем новые продукты
 
+print('Обновляю себестоимость товаров из Мой Склад')
+Product.add_new_selfcost()
+
 products_amount = len(Product.product_list)
 
 for count, product in enumerate(sorted(Product.product_list, key=lambda x: x.skus[0]), start=1):
@@ -37,11 +39,8 @@ for count, product in enumerate(sorted(Product.product_list, key=lambda x: x.sku
     # артикулы очистить от перевода строк и пробелов
     # автоматически добавлять артикул озона
 
-# TODO: получить себестоимость из МС (можно позже)
-
     log.add(f'[i] Товар {count} из {products_amount}, "{product}". Собираю данные о количестве заказов.')
 
-# TODO: получить прибыль в день за прошедшую неделю:
     # Добавляем к каждому товару количество заказов с последнего изменения
     product.add_oz_ordered()
     if product.pcs_ordered < MINIMUM_ORDERS:
@@ -72,6 +71,7 @@ for count, product in enumerate(sorted(Product.product_list, key=lambda x: x.sku
 
 Product.save_ozon_dinamic_price_data()
 Product.save_changes_xls()
+Product.clear_new_products_file()
 
 # for prod in Product.product_list:
 #     prod.display()

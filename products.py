@@ -3,8 +3,9 @@ import json
 from time import sleep
 from tqdm import tqdm
 from datetime import datetime, timedelta
-from apiconnect import ozon
-from log import log
+from my_modules.mp_apiconnect.apiconnect import ozon
+from my_modules.mp_apiconnect.apiconnect import ms
+from my_modules.log.log import log
 
 
 class Product:
@@ -19,6 +20,7 @@ class Product:
         self.price = price
         self.prev_change = prev_change
         self.prev_profit_day = prev_profit_day
+        self.prev_selfcost = selfcost
         self.selfcost = selfcost
         timepassed = datetime.now() - changed
         self.days_passed = timepassed.days + timepassed.seconds / (24 * 3600)
@@ -59,6 +61,7 @@ class Product:
 
         return cls.product_list
 
+
     @classmethod
     def append_new_products(cls):
         """
@@ -82,7 +85,7 @@ class Product:
                 skus_oz=[],
                 price=int(sheet.cell(row, 3).value),
                 prev_change=int(sheet.cell(row, 4).value),
-                selfcost=int(sheet.cell(row, 5).value),
+                selfcost=None,
                 changed=date_from,
                 prev_profit_day=0
                 )
@@ -109,7 +112,7 @@ class Product:
             # добавляем новый продукт в базу
             cls.product_list.append(new_product)
             log.add(f'[a] Товар {new_product} добавлен')
-            sheet.delete_rows(row)
+            row += 1
 
         while True:
             try:
@@ -118,6 +121,21 @@ class Product:
             except Exception as e:
                 log.add(f'[!] Ошибка сохранения файла new_products.xlsx. Закройте файл, если он открыт. {e}')
                 sleep(3)
+
+
+    @classmethod
+    def clear_new_products_file(cls):
+        """
+        Функция удаляет строки с новыми продуктами из файла new_products.xlsx
+        """
+
+        workbook = op.load_workbook('data/new_products.xlsx')
+        sheet = workbook.active
+        row = 2
+        while sheet.cell(row, 1).value:  # перебор строк, пока значение в поле артикул заполнено
+            sheet.delete_rows(row)
+        workbook.save('data/new_products.xlsx')
+
 
     @classmethod
     def save_ozon_dinamic_price_data(cls):
@@ -159,6 +177,30 @@ class Product:
                 log.add(f'[!] Ошибка сохранения json файла. Закройте файл, если он открыт. {e}')
                 sleep(3)
 
+    @classmethod
+    def add_new_selfcost(cls):
+        """
+        Функция добавляет новую себестоимость из Моего Склада
+        """
+        ms_selfcost = ms.get_selfcosts()  # получаем словарь с себестоиомстью из МС
+
+        for product in cls.product_list:
+            count_skus = 0
+            count_selfcost = 0
+
+            for sku in product.skus:
+                if sku in ms_selfcost and ms_selfcost[sku]:
+                    count_skus += 1
+                    count_selfcost += ms_selfcost[sku]
+
+            selfcost = count_selfcost / count_skus
+            product.selfcost = selfcost
+
+            if product.prev_selfcost:
+                selfcost_change = 1 - product.selfcost / product.prev_selfcost
+                if abs (selfcost_change) > 0.2:
+                    print(f'[i]Себестоимость товара {sku} {ozon.get_name(sku)} изменилась на {round(selfcost_change * 100)}%')
+
 
     @classmethod
     def save_changes_xls(cls):
@@ -184,8 +226,12 @@ class Product:
                 round(product.profit_day),
                 round(product.profit),
                 product.marj,
-                product.selfcost
+                round(product.selfcost),
             ]
+            if product.prev_selfcost:
+                new_row.append(round(product.prev_selfcost))
+                new_row.append(round(100 * (1 - product.selfcost / product.prev_selfcost)))
+
             sheet.append(new_row)
 
         while True:
