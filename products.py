@@ -3,16 +3,16 @@ import json
 from time import sleep
 from tqdm import tqdm
 from datetime import datetime, timedelta
-from my_modules.mp_apiconnect.apiconnect import ozon
 from my_modules.mp_apiconnect.moy_sklad import ms
+from my_modules.mp_apiconnect.ozon import ozon
 from my_modules.log.log import log
-
 
 class Product:
     product_list = []
+    statistic_data = {} # кэш для выгрузки статистики по дням
 
-
-    def __init__(self, title, changed, skus, skus_oz, price, prev_change, prev_profit_day, selfcost):
+    def __init__(self, title, changed, skus, skus_oz, price, prev_change, prev_profit_day,
+                 selfcost, marj, orders_total, items_total):
         self.title = title
         self.changed = changed
         self.skus = skus
@@ -26,11 +26,14 @@ class Product:
         self.days_passed = timepassed.days + timepassed.seconds / (24 * 3600)
         self.new_change = None
         self.profit_day = None
-        self.marj = None
+        self.marj = marj
         self.profit = None
         self.new_price = None
         self.pcs_ordered = None
-
+        self.orders = 0
+        self.orders_total = orders_total
+        self.items_total = items_total
+        self.on_stock = 0
 
     def __str__(self):
         return self.title
@@ -38,6 +41,54 @@ class Product:
     def display(self):
         print(self.__dict__)
 
+    @classmethod
+    def add_stock(cls):
+        """
+        Добавляет в данные каждой группы продуктов поле '.on_stock' - количество товара на складе
+        """
+        stock_loaded = ozon.get_ozon_stock()
+
+        stock_data = {}
+        for item in stock_loaded:
+            sku = item['item_code']
+            stock_data[sku] = stock_data.get(sku, 0) + item['free_to_sell_amount']
+
+        for group in cls.product_list:
+            for sku in group.skus:
+                if sku in stock_data:
+                    group.on_stock += stock_data[sku]
+
+
+    def if_badsellers_himarj(self, period: int, sale_limit: int, marj_limit: float):
+        """
+        Определяем товар, который плохо продается, но высокая маржа
+        :param sale_limit: штук в мес. Если продано меньше, цена снижается
+        :param marj_limit: Минимальная маржа, при которой правило действует, напр.:
+            0 - продажа по себестоимости
+            0.3 - продажа с маржой 30%
+        :return: True, если надо снизить цену
+        """
+
+        return (
+            # Дней без изменений > period
+            self.days_passed > period and
+            # Маржа не указана либо выше лимита
+            (self.marj is None or self.marj > marj_limit) and
+            # Продано меньше лимита
+            self.pcs_ordered < sale_limit and
+            # Товар есть на складе
+            self.on_stock
+        )
+
+
+    def count_total(self):
+        """
+        Добавляет количество заказов и штук за период к общему количеству. Общее количество используется в модуле
+        формирования заказа для подсчета среднего кол-ва товара в заказе.
+        :return:
+        """
+        self.orders_total += self.orders
+        self.items_total += self.pcs_ordered
 
     @classmethod
     def get_ozon_dinamic_price_data(cls):
@@ -54,7 +105,10 @@ class Product:
                 price = prod['price'],                             # текущая цена
                 prev_change = prod['prev_change'],                 # предыдущее изменение цены (1 или -1)
                 prev_profit_day = prod['prev_profit_day'],         # прибыль в день за прошлый период
-                selfcost = prod['selfcost']                       # себестоимость средняя по всем товарам
+                selfcost = prod['selfcost'],                       # себестоимость средняя по всем товарам
+                marj = prod.get('marj', None),                     # маржа
+                orders_total = prod.get('orders_total', 0),        # заказов за все время (для модуля формирования заказа)
+                items_total=prod.get('items_total', 0),            # штук за все время (для модуля формирования заказа)
             )
 
             cls.product_list.append(new_product_gr)
@@ -153,7 +207,10 @@ class Product:
                     "price": product.price,
                     "prev_change": product.prev_change,
                     "prev_profit_day": product.prev_profit_day,
-                    "selfcost": product.selfcost
+                    "selfcost": product.selfcost,
+                    "marj": product.marj,
+                    "orders_total": product.orders_total,
+                    "items_total": product.items_total
                 }
             else:
                 data = {
@@ -164,7 +221,8 @@ class Product:
                     "price": product.new_price,
                     "prev_change": product.new_change,
                     "prev_profit_day": product.profit_day,
-                    "selfcost": product.selfcost
+                    "selfcost": product.selfcost,
+                    "marj": product.marj
                 }
             new_json.append(data)
 
@@ -213,9 +271,11 @@ class Product:
 
         for product in cls.product_list:
             if product.new_price is None: continue
+
+            profit = product.profit if product.profit else 0
             new_row = [
                 datetime.today().strftime("%d.%m.%Y"),
-                round(product.days_passed, 1),
+                round(product.days_passed),
                 ' '.join(product.skus),
                 product.title,
                 product.price,
@@ -223,9 +283,10 @@ class Product:
                 product.new_change,
                 ms.products[product.skus[0]]['price'],
                 product.pcs_ordered,
+                product.orders,
                 round(product.pcs_ordered / product.days_passed, 1),
                 round(product.profit_day),
-                round(product.profit),
+                round(profit),
                 product.marj,
                 round(product.selfcost),
             ]
@@ -245,14 +306,37 @@ class Product:
 
 
     def add_oz_ordered(self):
-        """Дополняем товар данными о количестве заказов на озон за период"""
-        all_data = ozon.get_ozon_orders_statistic(self.changed, datetime.now())
+        """Дополняем товар данными о количестве заказанных товаров на озон за период"""
+
+        date_from_str = self.changed.strftime('%Y-%m-%d')
+
+        # Если статистика за этот период уже загружалась, берем из кэша
+        if date_from_str in Product.statistic_data:
+            all_data = Product.statistic_data[date_from_str]
+            print('Данные о заказах взяты из кэша')
+
+        # Если в кэше нет, загружаем и сохраняем в кэш
+        else:
+            all_data = ozon.get_ozon_orders_statistic(self.changed, datetime.now())
+            Product.statistic_data[date_from_str] = all_data
+
         pcs_ordered = 0
         for product_oz_sku in self.skus_oz:
             for prod_stat in all_data:
                 if product_oz_sku == prod_stat['sku_oz']:
                     pcs_ordered += prod_stat['pcs_ordered']
         self.pcs_ordered = pcs_ordered
+
+    def add_orders_amount(self):
+        """
+        Дополняем товар количеством заказов за период (необходимо для более корректного подсчета прибыльности,
+        т.к. считаем не кол-во товаров, а кол-во заказов, чтобы оптовые заказы не влияли на результат)
+        """
+        orders = 0
+        for sku_oz in self.skus_oz:
+            orders += len(ozon.get_orders_by_product(sku_oz, self.changed, status='not_canceled')['orders'])
+
+        self.orders = orders
 
     def add_profit(self, minimum_transactions, aquiring, profit_koef):
         """Дополняем товар средним доходом"""
@@ -261,7 +345,7 @@ class Product:
         #TODO: добавить цикл для подсчета всех товаров в списке, а не только первого
         postings = []
         for sku_oz in self.skus_oz:
-            postings.extend(ozon.get_ozon_orders_by_product(sku_oz, self.changed))
+            postings.extend(ozon.get_orders_by_product(sku_oz, self.changed, status = 'delivered')['postings'])
 
         #2. Считаем средний доход от доставленных товаров
         postings_total = 0  # кол-во отправлений
@@ -276,40 +360,55 @@ class Product:
         if postings_total < minimum_transactions: # пропускаем товары, у которых мало доставленных заказов
             self.profit = None
         else:
-            self.profit = income_total / postings_total - self.selfcost - aquiring * self.price
-            self.profit = self.profit * profit_koef
-            self.profit = round(self.profit, ndigits=2)
+            profit = income_total / postings_total - self.selfcost - aquiring * self.price
+            profit = profit * profit_koef
+            self.profit = round(profit, ndigits=2)
 
-            self.marj = round(self.profit / self.selfcost, 2)  # маржинальность
-
+            self.marj = round(profit / self.selfcost, 2)  # маржинальность
 
     def count_profit_per_day(self):
         """
         Считаем среднюю прибыль в день. Экстраполируем данные из транзакций на все товары и делим на прошедшие дни
+        За расчет берем количество заказов, а не товаров, чтобы оптовые заказы не влияли на результат
         """
-        profit = self.profit * self.pcs_ordered
+        profit = self.profit * self.orders
         self.profit_day = profit / self.days_passed
 
-    def count_new_price(self, koef, minimum_marj):
-        if self.profit_day > self.prev_profit_day:
-            self.new_change = self.prev_change
+    def count_new_price(self, koef, marj_min, profit_min, forced_down: bool):
+
+        # Если принудительное снижение
+        if forced_down:
+            self.new_change = -1
+
+        # Если нет принудительного снижения
         else:
-            self.new_change = -self.prev_change
+            if self.profit_day > self.prev_profit_day:
+                self.new_change = self.prev_change
+            else:
+                self.new_change = -self.prev_change
 
-        # Если цена была ниже цены Zeero, повышаем цену
-        if self.price < ms.products[self.skus[0]]['price']:
-            self.new_change = 1
-            log.add(f'[i] Цена товара {self.title} ниже допустимой')
+            # Если цена была ниже цены Zeero, повышаем цену
+            if self.price < ms.products[self.skus[0]]['price']:
+                self.new_change = 1
+                log.add(f'[i] Цена товара {self.title} ниже допустимой')
 
-        # Если маржинальность опустилась ниже допустимой, повышаем цену
-        if self.marj < 0.2:
-            self.new_change = 1
-            log.add(f'[i] У товара {self.title} маржинальность {self.marj} ниже допустимой {minimum_marj}')
+            # Если маржинальность опустилась ниже допустимой, повышаем цену
+            if self.marj < marj_min:
+                self.new_change = 1
+                log.add(f'[i] У товара {self.title} маржинальность {self.marj} ниже допустимой {marj_min}')
+
+            # Если прибыль с единицы ниже допустимой, повышаем цену
+            if self.profit < profit_min:
+                self.new_change = 1
+                log.add(f'[i] У товара {self.title} прибыльность {self.profit} ниже допустимой {profit_min}')
 
         self.new_price = round(self.price + self.price * koef * self.new_change)
-        log.add(f'[i] Цена повышена' if self.new_change == 1 else f'[i] Цена повышена')
 
-
+        if not self.prev_profit_day: self.prev_profit_day = 0
+        if not self.profit_day: self.profit_day = 0
+        log.add(f'[i] Прибыль в день. Была: {round(self.prev_profit_day)}, стала: {round(self.profit_day)}')
+        log.add(f'[i] Цена повышена' if self.new_change == 1 else f'[i] Цена понижена')
+        log.add(f'[i] Старая цена: {self.price}. Новая цена: {self.new_price}.')
 
     def change_price_oz(self):
         data_list = []
