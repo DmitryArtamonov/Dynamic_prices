@@ -222,7 +222,9 @@ class Product:
                     "prev_change": product.new_change,
                     "prev_profit_day": product.profit_day,
                     "selfcost": product.selfcost,
-                    "marj": product.marj
+                    "marj": product.marj,
+                    "orders_total": product.orders_total,
+                    "items_total": product.items_total
                 }
             new_json.append(data)
 
