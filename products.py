@@ -58,6 +58,19 @@ class Product:
                 if sku in stock_data:
                     group.on_stock += stock_data[sku]
 
+    @classmethod
+    def add_actions(cls) -> None:
+        """
+        Добавляет атрибут 'in_action'. True, если хотя бы один товар группы участвует в акции
+        """
+        for product in cls.product_list:
+            in_action = False
+            for sku in product.skus:
+                product_data = ozon.product_info(sku)
+                if product_data['in_action']:
+                    in_action = True
+                    break
+            product.in_action = in_action
 
     def if_badsellers_himarj(self, period: int, sale_limit: int, marj_limit: float):
         """
@@ -141,7 +154,10 @@ class Product:
                 prev_change=int(sheet.cell(row, 4).value),
                 selfcost=None,
                 changed=date_from,
-                prev_profit_day=0
+                prev_profit_day=0,
+                marj=0,
+                orders_total=0,
+                items_total=0
                 )
 
             # проверяем, что новых ску нет в базе
@@ -253,11 +269,17 @@ class Product:
                     count_skus += 1
                     count_selfcost += ms_selfcost[sku]
 
-            selfcost = count_selfcost / count_skus
-            product.selfcost = selfcost
+            if count_selfcost:
+                product.selfcost = count_selfcost / count_skus
+            else:
+                print(f"""
+                У товара {product.title} (SKU {product.skus}) нет данных о себестоимости.
+                Предыдущая себестоимость: {product.prev_selfcost}
+                """)
+                product.selfcost = product.prev_selfcost
 
             if product.prev_selfcost:
-                selfcost_change = 1 - product.selfcost / product.prev_selfcost
+                selfcost_change = 1 - product.prev_selfcost / product.selfcost
                 if abs (selfcost_change) > 0.2:
                     print(f'[i]Себестоимость товара {sku} {ozon.get_name(sku)} изменилась на {round(selfcost_change * 100)}%')
 
@@ -306,6 +328,22 @@ class Product:
                 log.add(f'[!] Ошибка сохранения xls файла. Закройте файл, если он открыт. {e}')
                 sleep(3)
 
+    def is_discount(self) -> bool:
+        """
+        Проверяет, участвует ли хоть один из товаров группы в акциях
+        (цена товара на площадке не соотвествует последней сохраненной цене)
+        :return:  True если участвует
+        """
+        saved_price = self.price
+
+        for sku in self.skus:
+            real_price_str = ozon.product_info(sku)['price']
+            real_price = int(real_price_str.split('.')[0])
+            print(real_price, saved_price)
+            if real_price != saved_price:
+                return True
+
+        return False
 
     def add_oz_ordered(self):
         """Дополняем товар данными о количестве заказанных товаров на озон за период"""

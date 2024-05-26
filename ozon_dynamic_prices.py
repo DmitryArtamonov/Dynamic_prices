@@ -1,30 +1,38 @@
+from datetime import datetime
+
+
 def ozon_dynamic_prices():
     from my_modules.log.log import log
     from products import Product # добавляем класс с товарами
 
-
     MINIMUM_PERIOD_DAYS = 8     # минимальный период, который должен пройти с последнего изменения
-    MINIMUM_ORDERS = 9         # минимальное количество заказов товара
+    MINIMUM_ORDERS = 7          # минимальное количество заказов товара
     MINIMUM_TRANSACTIONS = 5    # минимальное количество транзакций (доставленных товаров, по которым можно
-                                #   посчитать прибыльность)
+                                # посчитать прибыльность)
     PRICE_CHANGE_KOEF = 0.05    # коэффициент, на который изменяем цену
     ACQUIRING = 0.0015          # комиссия за эквайринг
     PROFIT_KOEF = 0.9           # коэффициент приведения расчетной прибыли к реальной (часть прибыли тратится на
                                 # дополнительные услуги, которые не учитываются в расчетах)
-    MARJ_MINIMUM = 0.3          # минимально допустимая маржинальность
-    PROFIT_MINIMUM = 30         # минимальный доход с единицы товара
+    MARJ_MINIMUM = 0.35         # минимально допустимая маржинальность
+    PROFIT_MINIMUM = 30         # минимальный доход с единицы товара (руб)
 
     # Для товаров с низкой оборачиваемостью
     # Период за который проверяются продажи
-    BADSELLERS_PERIOD = 30
+    BADSELLERS_PERIOD = 15
     # Маржа, выше которой цена товара снижается
     BADSELLERS_MARJ_LIMIT = 0.5
     # Количество проданных товаров за период, при котором цена снижается
-    BADSELLERS_AMOUNT_LIMIT = 5
+    BADSELLERS_AMOUNT_LIMIT = 3
+
 
     log.clear()
+
+    print('Загружаю товары')
     Product.get_ozon_dinamic_price_data() # загружаем данные о последнем изменении
     Product.append_new_products() # добавляем новые продукты
+
+    print('Загружаю акции')
+    Product.add_actions()
 
     print('Загружаю остатки на складах')
     Product.add_stock()
@@ -37,6 +45,11 @@ def ozon_dynamic_prices():
     for count, product in enumerate(sorted(Product.product_list, key=lambda x: x.skus[0]), start=1):
 
         print()
+
+        if product.in_action:
+            print(f"Товар {product} пропущен, так как участвует в акции")
+            product.changed = datetime.now()
+            continue
 
         if product.days_passed < MINIMUM_PERIOD_DAYS:
             log.add(f'[i] Товар "{product}" пропущен. С последнего изменения прошло меньше {MINIMUM_PERIOD_DAYS} дней')

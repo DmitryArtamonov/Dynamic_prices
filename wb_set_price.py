@@ -48,7 +48,7 @@ def wb_set_prices(koef=0):
                 product_wb = product_wb[0]
                 product.update({
                     'wb_id': product_wb['id'],
-                    'wb_name': product_wb['name'],
+                    'wb_name': product_wb['title'],
                     'wb_price': product_wb['price'],
                     'wb_discount': product_wb['discount'],
                     'wb_price_marketing': product_wb['price_marketing']
